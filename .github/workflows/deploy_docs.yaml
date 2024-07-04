@@ -63,7 +63,7 @@ jobs:
     - name: remove unused files
       run: |
         cd docs-files
-        python3 .github/scripts/remove_unused.py $(pwd)
+        python3 .github/scripts/remove_unused.py $(pwd)/docs
 
     - name: move files
       run: |
@@ -74,9 +74,9 @@ jobs:
         mkdir -p frontend/docs/en/${DOCS_TYPE}/${VERSION}/
         mkdir -p frontend/docs/zh/${DOCS_TYPE}/${VERSION}/
         mkdir -p frontend/docs/public/api/
-        cp -r docs-files/en_US/* frontend/docs/en/${DOCS_TYPE}/${VERSION}/
-        cp -r docs-files/zh_CN/* frontend/docs/zh/${DOCS_TYPE}/${VERSION}/
-        cp docs-files/directory.json frontend/docs/.vitepress/config/directory.json
+        cp -r docs-files/docs/en_US/* frontend/docs/en/${DOCS_TYPE}/${VERSION}/
+        cp -r docs-files/docs/zh_CN/* frontend/docs/zh/${DOCS_TYPE}/${VERSION}/
+        cp docs-files/docs/directory.json frontend/docs/.vitepress/config/directory.json
 
     - name: build docs
       run: |
