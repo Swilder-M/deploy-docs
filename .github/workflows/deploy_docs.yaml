@@ -63,7 +63,7 @@ jobs:
     - name: remove unused files
       run: |
         cd docs-files
-        python3 .github/scripts/remove_unused.py $(pwd)
+        python3 .github/scripts/remove_unused.py directory.json $(pwd)
 
     - name: move files
       run: |
