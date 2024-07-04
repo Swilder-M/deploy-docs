@@ -40,6 +40,10 @@ jobs:
       with:
         python-version: 3.8
 
+    - name: install python dependencies
+      run: |
+        pip3 install requests
+
     - name: use node.js
       uses: actions/setup-node@v3
       with:
@@ -55,11 +59,16 @@ jobs:
         echo "DOCS_BRANCH=${{ inputs.ref }}" >> $GITHUB_ENV
         echo "VERSION=${{ inputs.version }}" >> $GITHUB_ENV
         echo "DOCS_TYPE=${{ inputs.product }}" >> $GITHUB_ENV
-
-    - name: remove unused files
+    
+    - name: sync neuron docs
       run: |
         cd docs-files
-        python3 .github/scripts/remove_unused.py $(pwd)/ecp
+        python3 .github/scripts/sync_neuron.py $(pwd)
+
+    # - name: remove unused files
+    #   run: |
+    #     cd docs-files
+    #     python3 .github/scripts/remove_unused.py $(pwd)
 
     - name: move files
       run: |
@@ -70,12 +79,10 @@ jobs:
         mkdir -p frontend/docs/en/${DOCS_TYPE}/${VERSION}/
         mkdir -p frontend/docs/zh/${DOCS_TYPE}/${VERSION}/
         mkdir -p frontend/docs/public/api/
-        mkdir -p frontend/redoc/
-        cp docs-files/redocly/swagger.json frontend/redoc/swagger-en.json
-        cp docs-files/redocly/swagger.json frontend/redoc/swagger-zh.json
-        cp -r docs-files/ecp/en_US/* frontend/docs/en/${DOCS_TYPE}/${VERSION}/
-        cp -r docs-files/ecp/zh_CN/* frontend/docs/zh/${DOCS_TYPE}/${VERSION}/
-        cp docs-files/ecp/directory.json frontend/docs/.vitepress/config/directory.json
+        cp -r docs-files/en_US/* frontend/docs/en/${DOCS_TYPE}/${VERSION}/
+        cp -r docs-files/zh_CN/* frontend/docs/zh/${DOCS_TYPE}/${VERSION}/
+        cp -r docs-files/redocly/*.json frontend/redoc/
+        cp docs-files/directory.json frontend/docs/.vitepress/config/directory.json
 
     - name: build docs
       run: |
@@ -89,13 +96,14 @@ jobs:
         yarn global add redoc-cli
         LANGS=(zh en)
         for lang in "${LANGS[@]}"; do
-          redoc-cli bundle redoc/swagger-${lang}.json -t redoc/template-emqx-ecp.hbs \
-            --output docs/.vitepress/dist/${lang}/emqx-ecp/${VERSION}/api/api-docs.html \
-            --options.theme.colors.primary.main=#5e4eff \
+          redoc-cli bundle redoc/api-swagger-${lang}.json -t redoc/template.hbs \
+            --output docs/.vitepress/dist/${lang}/neuronex/${VERSION}/api/api-docs.html \
+            --options.theme.colors.primary.main=#00b173 \
             --options.theme.typography.headings.fontFamily='Roboto, sans-serif' \
-            --options.hide-hostname --templateOptions.title "EMQX ECP ${VERSION} API Documentation" \
-            --templateOptions.description "EMQX ECP ${VERSION} API Documentation" \
+            --options.hide-hostname --templateOptions.title "NeuronEX ${VERSION} API Documentation" \
+            --templateOptions.description "NeuronEX ${VERSION} API Documentation" \
             --templateOptions.version "${VERSION}" \
+            --templateOptions.neuronex \
             $(if [ "${lang}" == "zh" ]; then echo "--templateOptions.langZH \"zh\""; fi)
         done
 
