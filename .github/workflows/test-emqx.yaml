@@ -116,33 +116,54 @@ jobs:
       - name: setup hocon
         if: env.DOCS_TYPE == 'enterprise' || env.DOCS_TYPE == 'emqx'
         run: |
-          version_number=$(echo "${VERSION}" | tr -d v | awk -F. '{ printf("%d%02d%02d", $1,$2,$3) }')
-          if [ $version_number -lt 50300 ];
-          then
-            echo "Skip set hocon"
-            exit 0
-          fi
-
           echo "HOCON=true" >> $GITHUB_ENV
-          if [[ $DOCS_TYPE == "emqx" ]];
-          then
-            cp -r docs-files/hocon/ce/*.json frontend/docs/public/api/
-          else
-            cp -r docs-files/hocon/ee/*.json frontend/docs/public/api/
-          fi
-          online_versions=$(curl -s https://docs.emqx.com/api/${DOCS_TYPE}_hocon_versions.json)
 
-          if [ $? -eq 0 ]; then
-            online_versions=$(echo $online_versions | jq -r '.'[])
-          else
-            online_versions=""
-          fi
+          if [[ "$VERSION" == v5.7* || "$VERSION" == "latest" ]]; then
+            cp -r docs-files/hocon/*.json frontend/docs/public/api/
+            hocon_products=(emqx enterprise)
+            for hocon_product in "${hocon_products[@]}"; do
+              online_versions=$(curl -s https://docs.emqx.com/api/${hocon_product}_hocon_versions.json)
 
-          local_versions=$(ls frontend/docs/public/api/hocon-*-*on | sed -E 's_.*/hocon-(.*)-(en|zh).json_\1_g' | uniq)
-          all_versions=$(echo -e "$online_versions\n$local_versions" | sort -u | awk NF | uniq)
-          all_versions=$(echo "$all_versions" | sort -rV)
-          jq -nR '[inputs]' <<< "$all_versions" > frontend/docs/public/api/${DOCS_TYPE}_hocon_versions.json
-          cat frontend/docs/public/api/${DOCS_TYPE}_hocon_versions.json
+              if [ $? -eq 0 ]; then
+                  online_versions=$(echo $online_versions | jq -r '.'[])
+              else
+                  online_versions=""
+              fi
+
+              if [[ $hocon_product == "emqx" ]];
+              then
+                  local_versions=$(ls frontend/docs/public/api/hocon-ce-*-*on | sed -E 's_.*/hocon-ce-(.*)-(en|zh).json_\1_g' | uniq)
+              else
+                  local_versions=$(ls frontend/docs/public/api/hocon-ee-*-*on | sed -E 's_.*/hocon-ee-(.*)-(en|zh).json_\1_g' | uniq)
+              fi
+
+              all_versions=$(echo -e "$online_versions\n$local_versions" | sort -u | awk NF | uniq)
+              all_versions=$(echo "$all_versions" | sort -rV)
+              jq -nR '[inputs]' <<< "$all_versions" > frontend/docs/public/api/${hocon_product}_hocon_versions.json
+              cat frontend/docs/public/api/${hocon_product}_hocon_versions.json
+            done
+
+          else
+            if [[ $DOCS_TYPE == "emqx" ]];
+            then
+                cp -r docs-files/hocon/ce/*.json frontend/docs/public/api/
+            else
+                cp -r docs-files/hocon/ee/*.json frontend/docs/public/api/
+            fi
+            online_versions=$(curl -s https://docs.emqx.com/api/${DOCS_TYPE}_hocon_versions.json)
+
+            if [ $? -eq 0 ]; then
+                online_versions=$(echo $online_versions | jq -r '.'[])
+            else
+                online_versions=""
+            fi
+
+            local_versions=$(ls frontend/docs/public/api/hocon-*-*on | sed -E 's_.*/hocon-(.*)-(en|zh).json_\1_g' | uniq)
+            all_versions=$(echo -e "$online_versions\n$local_versions" | sort -u | awk NF | uniq)
+            all_versions=$(echo "$all_versions" | sort -rV)
+            jq -nR '[inputs]' <<< "$all_versions" > frontend/docs/public/api/${DOCS_TYPE}_hocon_versions.json
+            cat frontend/docs/public/api/${DOCS_TYPE}_hocon_versions.json
+          fi
 
       - name: build docs
         run: |
