@@ -106,7 +106,6 @@ jobs:
       - name: generate version config
         run: |
           cd docs-files
-          cd docs-files
           if [[ $DOCS_TYPE == "emqx" ]]; then
             version_list=$(git tag | egrep "^v.*$" | xargs echo -n)
           else
