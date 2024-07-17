@@ -1,0 +1,182 @@
+name: Build EMQX Preview Docs
+
+on:
+  workflow_dispatch:
+    inputs:
+      product:
+        required: true
+        type: string
+        description: 'The product name, example: emqx'
+      version:
+        required: true
+        type: string
+        description: 'The version number, example: v5.7.0, or latest'
+      repository:
+        required: true
+        type: string
+        description: 'The repository name, example: emqx/emqx-docs'
+      docs-ref:
+        required: true
+        type: string
+        description: 'The branch name, example: release-5.7'
+
+jobs:
+  build-preview-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: clone frontend
+        uses: actions/checkout@v4
+        with:
+          repository: emqx/docs-emqx-com-frontend
+          token: ${{ secrets.CI_GIT_TOKEN }}
+          path: frontend
+          ref: lyd/dev
+
+      - name: clone docs
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.repository || 'emqx/emqx-docs' }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.docs-ref || 'release-5.7' }}
+          fetch-depth: 0
+          path: docs-files
+
+      - name: use node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+
+      - name: use pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8.5.1
+
+      - name: use python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: set env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "DOCS_TYPE=${{ inputs.product }}" >> $GITHUB_ENV
+            echo "VERSION=${{ inputs.version }}" >> $GITHUB_ENV
+          else
+            echo "DOCS_TYPE=enterprise" >> $GITHUB_ENV
+            echo "VERSION=latest" >> $GITHUB_ENV
+          fi
+          echo "BASE_URL=https://docs.mqttce.com" >> $GITHUB_ENV
+
+      - name: remove unused files
+        run: |
+          cd docs-files
+          pip3 install pyyaml
+          ./gen.py ee | tee directory.json
+          python3 .github/scripts/remove_unused.py directory.json $(pwd)
+
+      - name: set current emqx version
+        if: env.DOCS_TYPE == 'enterprise' || env.DOCS_TYPE == 'emqx'
+        run: |
+          cd docs-files
+          source current-version.env
+          find ./en_US ./zh_CN -type f -name "*.md" -exec sed -i 's/@CE_VERSION@/'"$CE_VERSION"'/g' {} +
+          find ./en_US ./zh_CN -type f -name "*.md" -exec sed -i 's/@EE_VERSION@/'"$EE_VERSION"'/g' {} +
+          find ./en_US ./zh_CN -type f -name "*.md" -exec sed -i 's/@CE_MINOR_VERSION@/'"$CE_MINOR_VERSION"'/g' {} +
+          find ./en_US ./zh_CN -type f -name "*.md" -exec sed -i 's/@EE_MINOR_VERSION@/'"$EE_MINOR_VERSION"'/g' {} +
+
+      - name: move files
+        run: |
+          rm frontend/docs/en/index.md || true
+          rm frontend/docs/zh/index.md || true
+          rm frontend/docs/*.md || true
+          rm frontend/README.md || true
+          mkdir -p frontend/docs/en/${DOCS_TYPE}/${VERSION}/
+          mkdir -p frontend/docs/zh/${DOCS_TYPE}/${VERSION}/
+          mkdir -p frontend/docs/public/api/
+          mkdir -p frontend/redoc/
+          cp -r docs-files/en_US/* frontend/docs/en/${DOCS_TYPE}/${VERSION}/
+          cp -r docs-files/zh_CN/* frontend/docs/zh/${DOCS_TYPE}/${VERSION}/
+          cp -r docs-files/redocly/*.json frontend/redoc/ || true
+          cp docs-files/directory.json frontend/docs/.vitepress/config/directory.json
+
+      - name: generate version config
+        run: |
+          cd docs-files
+          python3 .github/scripts/generate_version.py $(git tag | egrep "v[0-9]$" | xargs echo -n) > ../frontend/docs/public/api/${DOCS_TYPE}_versions.json
+          cat ../frontend/docs/public/api/${DOCS_TYPE}_versions.json
+
+      - name: setup hocon
+        if: env.DOCS_TYPE == 'enterprise' || env.DOCS_TYPE == 'emqx'
+        run: |
+          version_number=$(echo "${VERSION}" | tr -d v | awk -F. '{ printf("%d%02d%02d", $1,$2,$3) }')
+          if [ $version_number -lt 50300 ];
+          then
+            echo "Skip set hocon"
+            exit 0
+          fi
+
+          echo "HOCON=true" >> $GITHUB_ENV
+          if [[ $DOCS_TYPE == "emqx" ]];
+          then
+            cp -r docs-files/hocon/ce/*.json frontend/docs/public/api/
+          else
+            cp -r docs-files/hocon/ee/*.json frontend/docs/public/api/
+          fi
+          online_versions=$(curl -s https://docs.emqx.com/api/${DOCS_TYPE}_hocon_versions.json)
+
+          if [ $? -eq 0 ]; then
+            online_versions=$(echo $online_versions | jq -r '.'[])
+          else
+            online_versions=""
+          fi
+
+          local_versions=$(ls frontend/docs/public/api/hocon-*-*on | sed -E 's_.*/hocon-(.*)-(en|zh).json_\1_g' | uniq)
+          all_versions=$(echo -e "$online_versions\n$local_versions" | sort -u | awk NF | uniq)
+          all_versions=$(echo "$all_versions" | sort -rV)
+          jq -nR '[inputs]' <<< "$all_versions" > frontend/docs/public/api/${DOCS_TYPE}_hocon_versions.json
+          cat frontend/docs/public/api/${DOCS_TYPE}_hocon_versions.json
+
+      - name: build docs
+        run: |
+          cd frontend
+          export NODE_OPTIONS=--max_old_space_size=4096
+          pnpm install --shamefully-hoist
+          pnpm build
+
+      - name: build redoc
+        if: env.DOCS_TYPE == 'emqx' || env.DOCS_TYPE == 'enterprise'
+        run: |
+          cd frontend
+          yarn global add redoc-cli
+          LANGS=(zh en)
+          for lang in "${LANGS[@]}"; do
+            redoc-cli bundle redoc/ce-${lang}.json -t redoc/template-emqx.hbs \
+              --output docs/.vitepress/dist/${lang}/emqx/${VERSION}/admin/api-docs.html \
+              --options.theme.colors.primary.main=#00b173 \
+              --options.theme.typography.headings.fontFamily='Roboto, sans-serif' \
+              --options.hide-hostname --templateOptions.title "EMQX ${VERSION} API Documentation" \
+              --templateOptions.description "EMQX ${VERSION} API Documentation" \
+              --templateOptions.version "${VERSION}" \
+              $(if [ "${lang}" == "zh" ]; then echo "--templateOptions.langZH \"zh\""; fi)
+
+            redoc-cli bundle redoc/ee-${lang}.json -t redoc/template-emqx-enterprise.hbs \
+              --output docs/.vitepress/dist/${lang}/enterprise/${VERSION}/admin/api-docs.html \
+              --options.theme.colors.primary.main=#5e4eff \
+              --options.theme.typography.headings.fontFamily='Roboto, sans-serif' \
+              --options.hide-hostname --templateOptions.title "EMQX Enterprise ${VERSION} API Documentation" \
+              --templateOptions.description "EMQX Enterprise ${VERSION} API Documentation" \
+              --templateOptions.version "${VERSION}" \
+              $(if [ "${lang}" == "zh" ]; then echo "--templateOptions.langZH \"zh\""; fi)
+          done
+
+      - name: upload dist to preview
+        if: (github.ref_name == 'next' && github.repository_owner == 'emqx') || github.event_name == 'workflow_dispatch'
+        run: |
+          pip3 install coscmd
+          coscmd config -a ${{ secrets.TENCENT_COS_ID }} -s ${{ secrets.TENCENT_COS_KEY }} -b docs-preview-1302406139 -e cos.accelerate.myqcloud.com
+          coscmd upload -r frontend/docs/.vitepress/dist/ /
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DOCS_TYPE }}-${{ env.VERSION }}.zip
+          path: frontend/docs/.vitepress/dist
